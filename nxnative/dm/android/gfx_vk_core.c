@@ -298,26 +298,13 @@ static int dc_ok(void) {
 static void dc_civac_range(uintptr_t a, uintptr_t n) {
     if (n && dc_ok()) { for (uintptr_t p = a & ~(uintptr_t)63; p < a + n; p += 64) __asm__ __volatile__("dc civac, %0" :: "r"((void *)p) : "memory"); __asm__ __volatile__("dsb ish" ::: "memory"); }
 }
-static int zc_clean(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_VK_ZC_CLEAN"); v = !(e && !atoi(e)); } return v; }
+// DM_VK_ZC_CLEAN: 1 (the default) cleans the pages the CPU wrote before each submission, 2 cleans whole pools (the first version that stopped the stale geometry, ~500 MB a
+// submission, about 12 ms), 0 turns cache maintenance off
+static int zc_mode(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_VK_ZC_CLEAN"); v = e ? atoi(e) : 1; } return v; }
 #define MAXPOOL 4096
 static vkpool_t g_pool[MAXPOOL]; static int g_npool;
 static pthread_rwlock_t g_pool_mu = PTHREAD_RWLOCK_INITIALIZER;
-// Every zero-copy pool, cleaned and invalidated, before each submission (zc_clean). A whole pool is far more than a frame writes (400 MB in Blasphemous 2), so this is the
-// passing test that answers whether cache maintenance is what the stale geometry needs; the efficient form then cleans only the pages the CPU wrote, tracked as the copied
-// pools' are. DM_VK_ZC_CLEAN=0 turns it off (docs/MALI.md)
-static uint64_t g_zc_cleaned;   // bytes of pool cleaned since the last report (mtl_sub_commit)
-static void zc_clean_all(void) {
-    if (!zc_clean()) return;
-    pthread_rwlock_rdlock(&g_pool_mu);
-    for (int i = 0; i < g_npool; i++) {
-        // a pool the game gives the CPU no access to (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS, 0x1) is never written by it: nothing to clean there, and those are the big
-        // ones (Blasphemous 2: 400 MB of pools, of which the CPU writes a few MB a frame)
-        if (!g_pool[i].zero_copy || (g_pool[i].flags & 0x1)) continue;
-        dc_civac_range((uintptr_t)g_pool[i].lo, (uintptr_t)(g_pool[i].hi - g_pool[i].lo));
-        g_zc_cleaned += g_pool[i].hi - g_pool[i].lo;
-    }
-    pthread_rwlock_unlock(&g_pool_mu);
-}
+static uint64_t g_zc_cleaned;   // bytes of pool cleaned since the last report (vk_pools_sync_)
 static uint32_t g_pool_gen;   // bumped under the write lock when a pool is added or removed: vk_pool_of's per-thread cache holds while it is unchanged
 // g_pool's indices by lo, remade under the write lock whenever a pool is added or removed: vk_pool_of searches it. A linear scan of g_pool behind the per-thread
 // cache was 18% of the profiler's samples of Super Mario Bros. Wonder's replay in its first level (a draw looks up more pools than the cache holds); with the
@@ -524,7 +511,29 @@ static void vk_pools_sync_(VkCommandBuffer cb) {
     enum { BLK = 64 << 10 };
     pthread_rwlock_rdlock(&g_pool_mu);
     for (int i = 0; i < g_npool; i++) {
-        vkpool_t *p = &g_pool[i]; if (!p->shadow) continue;
+        vkpool_t *p = &g_pool[i];
+        if (!p->zero_copy || !zc_mode()) goto shadow;   // (a zero-copy pool is cleaned below, a copied one copied)
+        {   // Zero-copy: the pages the CPU wrote must be cleaned (and invalidated) before the GPU reads them. Only those pages: the pool is 400 MB and a frame writes a few.
+            // Tracked with the write-protect machinery the copied pools use (nvn_dirty): a fault marks the 64 KB block, the sync cleans it and protects it again. A pool
+            // whose pages cannot be tracked is cleaned whole, as the first passing version did
+            uint8_t *zlo = (uint8_t *)(uintptr_t)p->lo; uint64_t zsize = p->hi - p->lo, zst = nvn_dirty_now();
+            if (!p->span && (p->span = nvn_dirty_span(zlo, zsize))) p->synced = 0;
+            if (zc_mode() == 2 || !p->synced || !p->span) {
+                if (p->span) nvn_dirty_protect(zlo, zsize);
+                dc_civac_range((uintptr_t)zlo, zsize); g_zc_cleaned += zsize;
+                if (zc_mode() == 2) continue;
+                p->synced = 1; p->stamp0 = p->stamp = zst; continue;
+            }
+            for (uint64_t off = 0; off < zsize; off += BLK) {
+                uint64_t n = zsize - off < BLK ? zsize - off : BLK;
+                if (!nvn_dirty_since_span(p->span, zlo + off, n, p->stamp0)) continue;
+                nvn_dirty_protect(zlo + off, n); dc_civac_range((uintptr_t)(zlo + off), n); g_zc_cleaned += n;
+            }
+            p->stamp0 = p->stamp; p->stamp = zst;
+            continue;
+        }
+    shadow:
+        if (!p->shadow) continue;
         uint8_t *lo = (uint8_t *)(uintptr_t)p->lo; uint64_t size = p->hi - p->lo, st = nvn_dirty_now();
         if (!p->span && (p->span = nvn_dirty_span(lo, size))) p->synced = 0;   // tracked only now (nvnMemoryPoolInitialize registers the range after the pool): copied whole once more, protected
         if (!p->synced || !p->span) {   // untracked: every sync copies all of it, as before
@@ -540,7 +549,8 @@ static void vk_pools_sync_(VkCommandBuffer cb) {
         p->stamp0 = p->stamp; p->stamp = st;
     }
     pthread_rwlock_unlock(&g_pool_mu);
-    static uint64_t n, last; if (++n % 600 == 0) { VKLOG("copied pools: %.1f MB synced in the last 600 submissions (%.2f MB each), %llu full copies so far", (g_sync_bytes - last) / 1048576.0, (g_sync_bytes - last) / 600.0 / 1048576.0, (unsigned long long)g_sync_full); last = g_sync_bytes; }
+    static uint64_t n, last, lastz; if (++n % 600 == 0) { VKLOG("copied pools: %.1f MB synced in the last 600 submissions (%.2f MB each), %llu full copies so far; zero-copy pools: %.1f MB a submission cleaned (dc civac)",
+        (g_sync_bytes - last) / 1048576.0, (g_sync_bytes - last) / 600.0 / 1048576.0, (unsigned long long)g_sync_full, (g_zc_cleaned - lastz) / 600.0 / 1048576.0); last = g_sync_bytes; lastz = g_zc_cleaned; }
 }
 // Copied pools after a submission: what the GPU wrote, back into the guest's pages. A pool never synced yet is left alone (its copy holds nothing of the game's).
 // A CPU-uncached pool (vk_pool_set_flags) takes back only the ranges the submission's GPU writes covered (sub_gpu_wrote):
@@ -841,9 +851,10 @@ void mtl_sub_begin(void) {
     VKCHK(vkBeginCommandBuffer(s->main, &bi)); g_cmd_gen++;
     // copied pools: what the game wrote before submitting goes into the GPU copy before any part of the submission can reach the GPU (DM_VK_CB_DRAWS sends
     // parts early; synced at the commit, those parts read the copy as the last submission left it), and only once no earlier submission still reads it
-    pthread_rwlock_rdlock(&g_pool_mu); int shadow = 0; for (int i = 0; i < g_npool; i++) shadow |= g_pool[i].shadow != NULL; pthread_rwlock_unlock(&g_pool_mu);
+    pthread_rwlock_rdlock(&g_pool_mu); int shadow = 0, zero = 0; for (int i = 0; i < g_npool; i++) { shadow |= g_pool[i].shadow != NULL; zero |= g_pool[i].zero_copy; } pthread_rwlock_unlock(&g_pool_mu);
     g_shadow_pools = shadow;
     if (shadow) { mtl_wait(g_fence, ~0ull); vk_pools_sync(NULL); }   // (after the completion thread's copy-back of the last submission, not only its GPU work)
+    else if (zero && zc_mode()) vk_pools_sync(NULL);   // zero-copy pools: the pages the CPU wrote, cleaned before the GPU reads them
     if (g_tsq) { vkCmdResetQueryPool(s->main, g_tsq, 2 * (uint32_t)g_cur, 2); vkCmdWriteTimestamp(s->main, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g_tsq, 2 * (uint32_t)g_cur); }
     if (g_cq) vkCmdResetQueryPool(s->main, g_cq, (uint32_t)g_cur * CQ, CQ);
     s->ncq = 0;
@@ -1103,8 +1114,6 @@ uint64_t mtl_sub_commit(void) {
         if (f > NFRING) mtl_wait(f - NFRING, ~0ull);
         fe = g_fring[f % NFRING]; VKCHK(vkResetFences(V.dev, 1, &fe)); si.pNext = NULL; si.signalSemaphoreCount = 0;
     }
-    zc_clean_all();   // the CPU's writes to the shared pools reach the GPU (DM_VK_ZC_CLEAN=0 turns it off)
-    { static uint64_t n; if (++n % 600 == 0) { VKLOG("pool cache maintenance: %.1f MB a submission on average (dc civac)", g_zc_cleaned / 600.0 / 1048576.0); g_zc_cleaned = 0; } }
     struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0); pthread_mutex_lock(&g_vk_queue_mu); VkResult r = vkQueueSubmit(V.q, 1, &si, fe); pthread_mutex_unlock(&g_vk_queue_mu); clock_gettime(CLOCK_MONOTONIC, &t1); g_ns_submit += (uint64_t)((t1.tv_sec - t0.tv_sec) * 1000000000ll + (t1.tv_nsec - t0.tv_nsec));
     if (r) { void vk_crumbs_report(void); vk_crumbs_report(); die("[vk] vkQueueSubmit: %d (device lost?)", r); }
     s->fence = f;
