@@ -362,16 +362,29 @@ int vk_pool_remap_ro(void *mem, size_t len) {
     pthread_rwlock_unlock(&g_pool_mu);
     return !rc && done == len ? 0 : -1;
 }
-static void pool_copy_back(vkpool_t *p) {   // the pages go back to anonymous memory with the buffer's contents (the game may reuse the memory)
-    uint64_t size = p->hi - p->lo; uint8_t *mem = (uint8_t *)(uintptr_t)p->lo;
-    // One pass, not two: a second anonymous region takes the bytes while the mapping is replaced, then mremap puts it at the pool's address. The bytes read out of the
-    // dma-buf are slow (MediaTek maps it uncached: 16 MB took about 160 ms, 4.7% of the process's CPU in Blasphemous 2), so the second copy the old code made is worth losing
+// A finalized zero-copy pool keeps its dma-buf mapped instead. Copying its bytes into anonymous memory read memory the CPU and the GPU share, whose cache state is the
+// driver's business, while the GPU could still be reading it: Blasphemous 2 lost a bridge's vertices (stretched across the frame) about once a second, and the copies cost
+// 4.7% of the process's CPU besides. Left mapped, the pages hold exactly what the game wrote until something else maps them — a new pool over the same address, the usual
+// case, which releases the old buffer. Past ZRET_MAX ranges or ZRET_BYTES the oldest is copied as before, so a game that frees pools it never reuses cannot hold the GPU's
+// memory for good
+typedef struct { uint64_t lo, hi; } zret;
+static zret g_zret[24]; static int g_nzret; static uint64_t g_zret_bytes;
+enum { ZRET_BYTES = 256u << 20 };
+static void copy_range_back(uint64_t lo, uint64_t hi) {   // (the oldest retained range, when too many are outstanding)
+    uint64_t size = hi - lo; uint8_t *mem = (uint8_t *)(uintptr_t)lo;
     void *tmp = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (tmp == MAP_FAILED) return;
     memcpy(tmp, mem, size);
-    if (mremap(tmp, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, mem) == mem) return;
-    mmap(mem, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-    memcpy(mem, tmp, size); munmap(tmp, size);
+    if (mremap(tmp, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, mem) != mem) { mmap(mem, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0); memcpy(mem, tmp, size); munmap(tmp, size); }
+}
+static void zret_mapped(uint64_t lo, uint64_t hi) {   // this range is mapped again: the retained pages there are replaced, and the buffer behind them let go
+    for (int i = 0; i < g_nzret; ) { if (g_zret[i].hi <= lo || g_zret[i].lo >= hi) { i++; continue; } g_zret_bytes -= g_zret[i].hi - g_zret[i].lo; g_zret[i] = g_zret[--g_nzret]; }
+}
+static void zret_keep(uint64_t lo, uint64_t hi) {
+    zret_mapped(lo, hi);
+    while (g_nzret >= (int)(sizeof g_zret / sizeof *g_zret) || (g_nzret && g_zret_bytes + (hi - lo) > ZRET_BYTES)) {   // (the oldest goes back, as it always did)
+        uint64_t olo = g_zret[0].lo, ohi = g_zret[0].hi; copy_range_back(olo, ohi); g_zret_bytes -= ohi - olo; memmove(g_zret, g_zret + 1, (size_t)(--g_nzret) * sizeof *g_zret); }
+    g_zret[g_nzret].lo = lo; g_zret[g_nzret].hi = hi; g_nzret++; g_zret_bytes += hi - lo;
 }
 // Pools over ZC_CHUNK are made of chunks of at most that size, each a pool entry with an AHardwareBuffer of its own: the Adreno 830's gralloc allocator service
 // (vendor.qti.hardware.display.allocator-service, snapalloc) aborts on a BLOB of 812 MB ("ubsan: mul-overflow" in SnapConstraintManager::AlignmentToAlignedConstraints),
@@ -394,6 +407,7 @@ static void pool_add_one(const void *mem, uint64_t size, uint64_t base, uint64_t
     vkpool_t *p = &g_pool[g_npool]; memset(p, 0, sizeof *p);
     p->lo = (uint64_t)(uintptr_t)mem; p->hi = p->lo + size; p->base = base; p->end = end; { static uint64_t ser; p->serial = ++ser; }
     int zc = ((uintptr_t)mem & 0xfff) || (size & 0xfff) ? -101 : getenv("DM_VK_NO_ZEROCOPY") ? -102 : zc_over(end - base) ? -103 : pool_zero_copy(p, (uint8_t *)mem, size);
+    if (!zc) zret_mapped(p->lo, p->hi);   // a new pool over a range a finalized one left mapped replaces those pages: the old buffer goes
     if (zc) {
         static int said; if (!said++) VKLOG("[RED] memory pool %p +%#llx could not be zero-copy (%d: -101 unaligned, -102 DM_VK_NO_ZEROCOPY, -103 over DM_VK_ZEROCOPY_MAX_MB, -2..-8 a step of pool_zero_copy): "
                                            "a GPU copy is refreshed before each submission (slow)", mem, (unsigned long long)size, zc);
@@ -417,7 +431,7 @@ void mtl_pool_del(const void *mem) {
         if (i == g_npool) { pthread_rwlock_unlock(&g_pool_mu); return; }
         vkpool_t p = g_pool[i]; g_pool[i] = g_pool[--g_npool]; pool_ord_make(); __atomic_fetch_add(&g_pool_gen, 1, __ATOMIC_RELEASE);
         pthread_rwlock_unlock(&g_pool_mu);
-        if (p.zero_copy) pool_copy_back(&p);
+        if (p.zero_copy) zret_keep(p.lo, p.hi);   // (left mapped, not copied; see zret_keep)
         vk_defer_free_buffer(p.buf, p.mem);   // the AHardwareBuffer goes with the imported memory's last reference
         if (p.ahb) AHardwareBuffer_release(p.ahb);
     }
