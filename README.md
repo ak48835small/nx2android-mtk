@@ -5,6 +5,8 @@
   </picture>
 </h1>
 
+> **This is `nx2android-mtk`**, the MediaTek adaptation of [nx2android](https://github.com/shirai91/nx2android): the branch that makes ports run on Arm's Mali GPU and MediaTek's Vulkan drivers, brought up on a **Redmi K50 (Dimensity 8100, Mali-G610 MC6, Android 13)**. *Blasphemous 2* runs at a stable 60 fps there. What Mali lacks and what the host does about it is in [docs/MALI.md](docs/MALI.md); the porter and the graphics core are otherwise upstream's.
+
 Port your own Nintendo Switch games to Android, natively: the game's own arm64 code runs on the device, with the Switch's system services stood in for by a host and NVN graphics replayed on Vulkan. Pick the game's folder, click **Port**, and get an APK plus the game's data, installed on your device if you like. Bring your own game files and keys; nothing from any game is in this repository.
 
 This is the Android port of [nxnative](https://github.com/seedds/nxnative), which does the same on iPhone and iPad. Supported games: [Games](#games).
