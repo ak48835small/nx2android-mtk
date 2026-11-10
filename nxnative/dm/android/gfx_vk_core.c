@@ -13,6 +13,9 @@
 #include <android/hardware_buffer.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <setjmp.h>
+#include <signal.h>
+#include <stdalign.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -276,9 +279,45 @@ void vk_pipeline_cache_save(void) {
 }
 
 // ---------------- memory pools ----------------
+// CPU cache maintenance for the pools, which the CPU and the GPU share: a pool is the game's own memory, mapped as the GPU's (pool_zero_copy), and a write the CPU makes
+// stays in its caches until something cleans them. On the Switch the game does that itself (nn::os::FlushDataCache, whose DC instructions we keep); a driver that maps the
+// dma-buf cacheable on a host that does not do it for us leaves the GPU reading stale bytes, which shows as geometry stretched across the frame. dc_civac_range cleans and
+// invalidates a range; the probe keeps a device where EL0 may not run cache maintenance (SCTLR_EL1.UCI clear) from being ended by a SIGILL
+static sigjmp_buf g_dc_jmp; static volatile sig_atomic_t g_dc_fault;
+static void dc_sigill(int sig) { (void)sig; g_dc_fault = 1; siglongjmp(g_dc_jmp, 1); }
+static int dc_ok(void) {
+    static int ok = -1; if (ok >= 0) return ok;
+    struct sigaction sa, old; memset(&sa, 0, sizeof sa); sa.sa_handler = dc_sigill; sa.sa_flags = SA_NODEFER; sigaction(SIGILL, &sa, &old);
+    alignas(64) char probe[64]; memset(probe, 0, sizeof probe);
+    if (!sigsetjmp(g_dc_jmp, 1)) { __asm__ __volatile__("dc civac, %0" :: "r"(probe) : "memory"); __asm__ __volatile__("dsb sy" ::: "memory"); ok = 1; }
+    else ok = 0;
+    sigaction(SIGILL, &old, NULL);
+    VKLOG("CPU cache maintenance (dc civac) %s", ok ? "available: the pools are cleaned before each submission (DM_VK_ZC_CLEAN=0 turns it off)" : "not permitted at EL0: the GPU may read stale pool bytes");
+    return ok;
+}
+static void dc_civac_range(uintptr_t a, uintptr_t n) {
+    if (n && dc_ok()) { for (uintptr_t p = a & ~(uintptr_t)63; p < a + n; p += 64) __asm__ __volatile__("dc civac, %0" :: "r"((void *)p) : "memory"); __asm__ __volatile__("dsb ish" ::: "memory"); }
+}
+static int zc_clean(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_VK_ZC_CLEAN"); v = !(e && !atoi(e)); } return v; }
 #define MAXPOOL 4096
 static vkpool_t g_pool[MAXPOOL]; static int g_npool;
 static pthread_rwlock_t g_pool_mu = PTHREAD_RWLOCK_INITIALIZER;
+// Every zero-copy pool, cleaned and invalidated, before each submission (zc_clean). A whole pool is far more than a frame writes (400 MB in Blasphemous 2), so this is the
+// passing test that answers whether cache maintenance is what the stale geometry needs; the efficient form then cleans only the pages the CPU wrote, tracked as the copied
+// pools' are. DM_VK_ZC_CLEAN=0 turns it off (docs/MALI.md)
+static uint64_t g_zc_cleaned;   // bytes of pool cleaned since the last report (mtl_sub_commit)
+static void zc_clean_all(void) {
+    if (!zc_clean()) return;
+    pthread_rwlock_rdlock(&g_pool_mu);
+    for (int i = 0; i < g_npool; i++) {
+        // a pool the game gives the CPU no access to (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS, 0x1) is never written by it: nothing to clean there, and those are the big
+        // ones (Blasphemous 2: 400 MB of pools, of which the CPU writes a few MB a frame)
+        if (!g_pool[i].zero_copy || (g_pool[i].flags & 0x1)) continue;
+        dc_civac_range((uintptr_t)g_pool[i].lo, (uintptr_t)(g_pool[i].hi - g_pool[i].lo));
+        g_zc_cleaned += g_pool[i].hi - g_pool[i].lo;
+    }
+    pthread_rwlock_unlock(&g_pool_mu);
+}
 static uint32_t g_pool_gen;   // bumped under the write lock when a pool is added or removed: vk_pool_of's per-thread cache holds while it is unchanged
 // g_pool's indices by lo, remade under the write lock whenever a pool is added or removed: vk_pool_of searches it. A linear scan of g_pool behind the per-thread
 // cache was 18% of the profiler's samples of Super Mario Bros. Wonder's replay in its first level (a draw looks up more pools than the cache holds); with the
@@ -1064,6 +1103,8 @@ uint64_t mtl_sub_commit(void) {
         if (f > NFRING) mtl_wait(f - NFRING, ~0ull);
         fe = g_fring[f % NFRING]; VKCHK(vkResetFences(V.dev, 1, &fe)); si.pNext = NULL; si.signalSemaphoreCount = 0;
     }
+    zc_clean_all();   // the CPU's writes to the shared pools reach the GPU (DM_VK_ZC_CLEAN=0 turns it off)
+    { static uint64_t n; if (++n % 600 == 0) { VKLOG("pool cache maintenance: %.1f MB a submission on average (dc civac)", g_zc_cleaned / 600.0 / 1048576.0); g_zc_cleaned = 0; } }
     struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0); pthread_mutex_lock(&g_vk_queue_mu); VkResult r = vkQueueSubmit(V.q, 1, &si, fe); pthread_mutex_unlock(&g_vk_queue_mu); clock_gettime(CLOCK_MONOTONIC, &t1); g_ns_submit += (uint64_t)((t1.tv_sec - t0.tv_sec) * 1000000000ll + (t1.tv_nsec - t0.tv_nsec));
     if (r) { void vk_crumbs_report(void); vk_crumbs_report(); die("[vk] vkQueueSubmit: %d (device lost?)", r); }
     s->fence = f;
