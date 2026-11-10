@@ -1,76 +1,108 @@
-<h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <img alt="nx2android" src="docs/images/logo.svg" height="140">
-  </picture>
-</h1>
+# nx2android · MTK / Mali 分支
 
-> **This is `nx2android-mtk`**, the MediaTek adaptation of [nx2android](https://github.com/shirai91/nx2android): the branch that makes ports run on Arm's Mali GPU and MediaTek's Vulkan drivers, brought up on a **Redmi K50 (Dimensity 8100, Mali-G610 MC6, Android 13)**. *Blasphemous 2* runs at a stable 60 fps there. What Mali lacks and what the host does about it is in [docs/MALI.md](docs/MALI.md); the porter and the graphics core are otherwise upstream's.
+> **nx2android-mtk** 是 [nx2android](https://github.com/shirai91/nx2android) 的 **MediaTek + Arm Mali 适配分支**：让 Switch 移植能在天玑（Dimensity）/ Mali GPU 的安卓设备上跑起来。
+> 已在 **Redmi K50（天玑 8100，Mali-G610 MC6，Android 13）** 上验证：*《神之亵渎 2》(Blasphemous 2)* 稳定 30–40 fps 可玩。
+>
+> English: the MediaTek/Mali adaptation of nx2android. Ports run on Arm Mali GPUs and MediaTek's Vulkan drivers; the porter and the graphics core are upstream's, the Mali work is described in [docs/MALI.md](docs/MALI.md).
 
-Port your own Nintendo Switch games to Android, natively: the game's own arm64 code runs on the device, with the Switch's system services stood in for by a host and NVN graphics replayed on Vulkan. Pick the game's folder, click **Port**, and get an APK plus the game's data, installed on your device if you like. Bring your own game files and keys; nothing from any game is in this repository.
+它把 Switch 游戏**自己的 arm64 代码**跑在安卓上：用一个宿主顶替 Switch 的系统服务，把 NVN 图形调用重放到 Vulkan。选游戏文件夹、点 **Port**，得到 APK + 游戏数据，插上设备还能直接安装。
 
-This is the Android port of [nxnative](https://github.com/seedds/nxnative), which does the same on iPhone and iPad. Supported games: [Games](#games).
+自备游戏文件与 `prod.keys`（从你自己的 Switch 导出）。本仓库和它的发布物都不含任何游戏内容或密钥。
 
-## Games
+iOS / iPadOS 的同源项目：[nxnative](https://github.com/seedds/nxnative)。
 
-These games play on Android. Tested on a Lenovo Legion Y700 (Snapdragon 8 Elite, Adreno 830). Adreno and Xclipse GPUs read the Switch's BC-compressed textures as they are; Mali (MediaTek Dimensity) and PowerVR have no BC, so the host decodes those textures on the CPU instead: 2 to 8 times their bytes in the device's memory and longer loads, which wants 8 GB or more ([docs/MALI.md](docs/MALI.md)).
+---
 
-| | |
-|:---:|:---:|
-| ![13 Sentinels: Aegis Rim](docs/images/13-sentinels.jpg)<br>13 Sentinels: Aegis Rim<br><sub>`v0.1.3` · update 1.10 · 60 fps</sub> | ![Advance Wars 1+2: Re-Boot Camp](docs/images/advance-wars-1-2-re-boot-camp.jpg)<br>Advance Wars 1+2: Re-Boot Camp<br><sub>`v0.1.3` · base game 1.0.0 · 60 fps (30 in battle on Switch)</sub> |
-| ![Blasphemous 2](docs/images/blasphemous-2.jpg)<br>Blasphemous 2<br><sub>`v0.1.3` · update 1.0.8 · 60 fps</sub> | ![Captain Toad: Treasure Tracker](docs/images/captain-toad-treasure-tracker.jpg)<br>Captain Toad: Treasure Tracker<br><sub>`v0.1.3` · update 1.4.2 · 60 fps</sub> |
-| ![Castlevania: Belmont's Curse](docs/images/castlevania-belmonts-curse.jpg)<br>Castlevania: Belmont's Curse<br><sub>`v0.2.0` · update 1.1.0 · 60 fps</sub> | ![Celeste](docs/images/celeste.jpg)<br>Celeste<br><sub>`v0.1.3` · update 1.4.1.1 · 60 fps</sub> |
-| ![Donkey Kong Country Returns HD](docs/images/donkey-kong-country-returns-hd.jpg)<br>Donkey Kong Country Returns HD<br><sub>`v0.1.3` · update 1.1.0 · 60 fps</sub> | ![Graveyard Keeper 2](docs/images/graveyard-keeper-2.jpg)<br>Graveyard Keeper 2<br><sub>`v0.1.2` · update 1.0.4 · 60 fps (30 on Switch)</sub> |
-| ![Hades II](docs/images/hades-ii.jpg)<br>Hades II<br><sub>`v0.1.2` · update 1.0 · 60 fps</sub> | ![Hollow Knight: Silksong](docs/images/hollow-knight-silksong.jpg)<br>Hollow Knight: Silksong<br><sub>`v0.1.3` · update 1.0.30000 · 60 fps</sub> |
-| ![Mario vs. Donkey Kong](docs/images/mario-vs-donkey-kong.jpg)<br>Mario vs. Donkey Kong<br><sub>`v0.1.3` · update 1.0.1 · 60 fps</sub> | ![Metroid Dread](docs/images/metroid-dread.jpg)<br>Metroid Dread<br><sub>`v0.3.0` · update 2.1.0 · 60 fps</sub> |
-| ![NEO: The World Ends with You](docs/images/neo-the-world-ends-with-you.jpg)<br>NEO: The World Ends with You<br><sub>`v0.1.2` · update 1.03</sub> | ![Paper Mario: The Origami King](docs/images/paper-mario-the-origami-king.jpg)<br>Paper Mario: The Origami King<br><sub>`v0.2.0` · update 1.0.1 · 60 fps (30 on Switch)</sub> |
-| ![Paper Mario: The Thousand-Year Door](docs/images/paper-mario-the-thousand-year-door.jpg)<br>Paper Mario: The Thousand-Year Door<br><sub>`v0.2.0` · update 1.0.1 · 60 fps (30 on Switch) · **work in progress**: playable, but lighting flickers (walls go black for single frames after a fall)</sub> | ![Pokémon Legends: Arceus](docs/images/pokemon-legends-arceus.jpg)<br>Pokémon Legends: Arceus<br><sub>`v0.2.0` · update 1.1.1 · 60 fps (30 on Switch)</sub> |
-| ![Pokémon Legends: Z-A](docs/images/pokemon-legends-z-a.jpg)<br>Pokémon Legends: Z-A<br><sub>`v0.3.0` · update 2.0.2 · 30 fps (as on Switch) · **tested to Lumiose station**: the city and battles not checked yet</sub> | ![Super Mario Bros. Wonder](docs/images/super-mario-bros-wonder.jpg)<br>Super Mario Bros. Wonder<br><sub>`v0.1.3` · update 1.2.1 · 60 fps, dips to 40</sub> |
-| ![Super Mario Odyssey](docs/images/super-mario-odyssey.jpg)<br>Super Mario Odyssey<br><sub>`v0.2.0` · update 1.4.1 · 60 fps · shake the device to throw Cappy</sub> | ![Tales of Eternia Remastered](docs/images/tales-of-eternia-remastered.jpg)<br>Tales of Eternia Remastered<br><sub>`v0.1.2` · update 2.0.0 · 60 fps</sub> |
-| ![The Legend of Zelda: Tears of the Kingdom](docs/images/the-legend-of-zelda-tears-of-the-kingdom.jpg)<br>The Legend of Zelda: Tears of the Kingdom<br><sub>`v0.3.0` · update 1.4.3 · 30 fps, 60 in caves and shrines · smoothest with a Turnip Vulkan driver · **work in progress**: 60 fps in the open world</sub> | ![UNDER NIGHT IN-BIRTH Exe:Late[cl-r]](docs/images/under-night-in-birth-exe-late-cl-r.jpg)<br>UNDER NIGHT IN-BIRTH Exe:Late[cl-r]<br><sub>`v0.2.0` · update 1.0.3 · 60 fps</sub> |
-| ![UNDER NIGHT IN-BIRTH II Sys:Celes](docs/images/under-night-in-birth-ii-sys-celes.jpg)<br>UNDER NIGHT IN-BIRTH II Sys:Celes<br><sub>`v0.2.0` · update 1.42 · 60 fps</sub> | ![Unicorn Overlord](docs/images/unicorn-overlord.jpg)<br>Unicorn Overlord<br><sub>`v0.1.3` · update 1.05 · 60 fps · **boots**: saving and a full battle not tested yet</sub> |
-| ![Unpacking](docs/images/unpacking.jpg)<br>Unpacking<br><sub>`v0.1.2` · update 2.01 · 60 fps · played by touch</sub> | ![Viractal: Will You Trust Your Party?](docs/images/viractal.jpg)<br>Viractal: Will You Trust Your Party?<br><sub>`v0.1.0` · update 1.4.5</sub> |
-| ![Xenoblade Chronicles 3](docs/images/xenoblade-chronicles-3.jpg)<br>Xenoblade Chronicles 3<br><sub>`v0.1.0` · update 2.2.0 · 30 fps · **work in progress**: some effects and models don't draw yet</sub> |  |
+## 这个分支改了什么
 
-The tag (`v0.1.3`) is the latest nx2android version the game was tested on. Older games are not tested again for each release: if a later version breaks one, a patch release fixes it. A tag newer than the [latest release](https://github.com/shirai91/nx2android/releases/latest) is the next release, and the game needs the development checkout until it ships.
+上游只针对 Adreno / Xclipse。Mali 的结构不一样（tile-based 渲染、没有 BC 纹理压缩、gralloc 行为不同），这个分支专门补这些：
 
-A game that is not in this table is not supported yet. The games we look at next, and the ones done: [docs/PORT_CHECKLIST.md](docs/PORT_CHECKLIST.md).
+| 问题 | Mali 上的表现 | 修法 |
+|---|---|---|
+| **没有 BC 纹理压缩** | Switch 游戏纹理是 BC 格式，Mali 直接不认 | 上传时在 CPU 解码成 RGBA8 / R8 / R8G8 / RGBA16F，解码后的显存由 `DM_VK_BC_MAX_MB` 限制；采样字节数是主机的 4–8 倍，所以建议 8GB 内存以上 |
+| **gralloc 句柄带多个 fd** | 只认第一个 fd → 所有内存池退化成"每帧整块拷贝" → **600ms 一帧、2 FPS、黑屏** | 逐个尝试句柄里的每个 fd，找到真正能 mmap 的 dma-buf（天玑上是第 2 个） |
+| **CPU 写入对 GPU 不可见** | 偶尔整个网格被拉成横贯屏幕的细线（约每秒一次） | 每次提交前对**游戏写过的那部分共享内存**做 `dc civac`（clean+invalidate），用 mprotect 脏页跟踪，只刷写过的 64KB 块 |
+| **旧款 Mali 采样器上限低** | Bifrost 上每 stage 只有 16 个 | 超出时在日志里点名，方便定位是哪个 shader |
+| **边框色 / 线性过滤差异** | 缺 `customBorderColorWithoutFormat`；部分格式不支持线性过滤 | 边框色退回透明黑并记录；不支持线性过滤的采样改绑 nearest |
+| **CPU 侧热点** | 抢占判断每次读 `/proc`、池销毁整块拷回 | 线程状态 1ms 缓存；池 finalize 后保留映射不再拷回 → 菜单 30 fps → 40 fps |
 
-## For players: port a game without programming
+原理、日志含义、真机验证步骤：**[docs/MALI.md](docs/MALI.md)**。
 
-1. Download `nx2android-<version>-windows-x64.zip` (Windows) or `nx2android-<version>-macos-arm64.zip` (Mac with Apple silicon) from [Releases](https://github.com/shirai91/nx2android/releases/latest), unzip it and start **nx2android** (on a Mac, see [packaging/INSTALL.md](packaging/INSTALL.md#1-start-the-app) first).
-2. **Setup** tab: click **Download missing tools** (the Android NDK, the .NET SDK and platform-tools, about 1 GB, from Google and Microsoft), then set your **prod.keys**. Every line turns green.
-3. **Port** tab: choose the folder with the game's NSP, XCI, NSZ or XCZ files (base game, update, DLC) and click **Port**.
-4. Tick **Install on the device when done** with the device plugged in and USB debugging on, or copy the APK and the data folder yourself.
+## 已测试
 
-Pokémon Legends: Arceus and Pokémon Legends: Z-A need the device during the port, even without **Install on the device when done**: their shaders are in Oodle-compressed archives, which the port decodes with the game's own decoder on the device. Have platform-tools (adb) from step 2, and plug in the device with USB debugging on before you click **Port**.
+| 游戏 | 设备 | 状态 |
+|---|---|---|
+| Blasphemous 2（1.0.8） | Redmi K50 · 天玑 8100 · Mali-G610 MC6 | 存档点场景 30–40 fps；标题、菜单、过场、教学、战斗正常；内存池零拷贝、无拉伸伪影 |
 
-A game played by touch: tick **Touch game** on the Port tab (`--touch`). The on-screen gamepad then starts hidden and every touch but one on the menu button goes to the game; the pause menu shows the gamepad again.
+Adreno / Xclipse 设备请用[上游](https://github.com/shirai91/nx2android)：支持的游戏更多、也更稳。
 
-A game slowed by its draw calls in busy scenes: tick **Multithread replay** on the Port tab (`--mt-replay`). The game's Vulkan commands are then recorded on a thread of their own. It stays on until you port the game again without it.
+## 需要什么
 
-To arrange the on-screen controls, open the pause menu's **Gamepad** tab and choose **Edit layout**: drag a control to move it, pinch or use **− / +** to resize it. **Save** keeps the layout for the next launch and **Cancel** discards your edits. **Snap to grid** (off at first, and remembered) shows a square grid and snaps each control's center to it as you drag.
+- 一台 **Windows PC** 或 Apple silicon 的 Mac（约 30GB 空闲：工具链 4GB，一个移植约等于游戏体积的两倍）
+- 一台安卓设备：**Mali GPU**（联发科天玑、部分 Exynos）。建议 **8GB 内存以上**
+- 游戏本体（NSP / XCI / NSZ / XCZ，含更新与 DLC）和你的 **`prod.keys`**
 
-A game that crashes with "AllocateAddressRegion … refused (0x1803)" in its log needs more address space: port it again with a larger **Extra address space** on the Port tab (`--alias-headroom` on the command line). [packaging/INSTALL.md](packaging/INSTALL.md#when-something-goes-wrong) says more.
+## 快速开始
 
-The step-by-step guide is [packaging/INSTALL.md](packaging/INSTALL.md). You need your own game files and `prod.keys`, dumped from your own Switch; the tool never ships or downloads either. NSZ and XCZ files are decompressed during the port (into the build folder's `tmp/`, deleted once extracted).
+1. 装 Python 3.11+ 与依赖：
 
-## Saves
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-The game's pause menu (Game tab) has **Export save** and **Import save**: an export is a folder in `Android/data/<package>/files/saves/` on the device, the save's files as a console's save tools copy them, so a save from a console imports the same way. The app's **Saves** tab moves them between the device and the PC.
+2. 启动图形界面：
 
-An import replaces the save the game has; the app exports that one first on the device (a folder ending `-before-import`). Uninstalling the app deletes its saves and its exports: copy them to the PC first.
+   ```bash
+   python -m gui
+   ```
 
-## For developers
+   命令行等价：`python -m porter port <游戏文件夹> -k <prod.keys> --install`
 
-Running from the repository, the command line, the repository layout, building the bundle, tests and commit messages: [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md). How it is put together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+3. **Setup** 页：点 **Download missing tools**（Android NDK r27c、.NET SDK、platform-tools，约 1GB），再选 `prod.keys`，全部变绿。
+4. **Port** 页：选游戏文件夹 → **Port**。勾选 **Install on the device when done** 可直接装到插着 USB 的设备上。
 
-## Keys and game files
+详细步骤与常见问题：[packaging/INSTALL.md](packaging/INSTALL.md)。
 
-nx2android decrypts your game files with your `prod.keys` while it ports them, as Switch emulators do. This repository and its releases contain no keys, no game files and nothing extracted from them, and the tool never downloads either. Dump both from your own Switch, and don't share them or the APKs and data packs built from them.
+### 在 Mali 设备上首次运行要看什么
 
-Nintendo's takedown notices so far have gone to whoever hosts a project (13 Switch emulator repositories on GitHub in February 2026), not to players. Whether decrypting your own games for your own use is allowed depends on where you live.
+游戏数据目录里的 `log.txt` 会自报能力（`adb pull /sdcard/Android/data/<包名>/files/log.txt`）：
 
-## License
+```
+[vk] GPU Mali-G610 MC6 (vendor 0x13b5), Vulkan 1.1.177, driver 32.1.0
+[vk] GPU family: ARM Mali; a stage may bind 500000 samplers, ...
+[vk] ... BC no (decoded on the CPU), ASTC yes, ...
+[vk] zero-copy: the buffer's dma-buf is fd 1 of 3 (the handle carries others that do not map)
+[vk] CPU cache maintenance (dc civac) available: the pools are cleaned before each submission
+```
 
-MIT, as nxnative (see `nxnative/LICENSE`). Third-party code keeps its own license.
+以 `[RED]` 开头的行就是需要查的地方，每条的含义都写在 [docs/MALI.md](docs/MALI.md)。
+
+## 从源码
+
+```bash
+pip install -r requirements.txt
+python -m gui                 # 图形界面
+python -m porter --help       # 命令行
+python -m unittest discover tests
+```
+
+打包玩家版需要 PySide6、PyInstaller，并且 Windows 上要先编译 PyInstaller 的 bootloader（需要 MSVC Build Tools）：
+
+```bash
+python packaging/build_bootloader.py
+python packaging/build_bundle.py
+```
+
+## 已知问题
+
+- **30 fps 是这颗 GPU 的上限，不是 bug**：单帧 GPU 时间约 26ms（43 个全屏 pass、1080p 目标），60 fps 需要 16.6ms。想更快只能按游戏削减后处理或降内部分辨率（per-game 工作）。
+- 部分特性 Mali 不支持（32 位浮点的线性过滤、某些 advanced blend mode），会退回近似实现，个别特效观感可能不同。
+- 目前只验证过一款游戏。新游戏出问题时，`log.txt` 里的 `[RED]` 行通常能直接指出方向。
+
+## 致谢与许可
+
+- 上游：[shirai91/nx2android](https://github.com/shirai91/nx2android) —— 移植工具与图形核心
+- iOS 同源：[seedds/nxnative](https://github.com/seedds/nxnative)
+- 许可：MIT，见 [nxnative/LICENSE](nxnative/LICENSE)；第三方代码各自沿用其许可
+
+本项目不提供也不下载任何游戏文件或密钥。用你自己的卡带/数字版导出，风险与合法性取决于你所在地区。
