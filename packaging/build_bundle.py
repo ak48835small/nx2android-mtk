@@ -20,7 +20,11 @@ def main():
     if os.name == 'nt':   # the prebuilt launcher is flagged by Windows antivirus engines only
         sys.path.insert(0, str(ROOT / 'packaging'))
         import build_bootloader
-        if not build_bootloader.is_local(): sys.exit('PyInstaller has its prebuilt bootloader, which antivirus engines flag: run python packaging/build_bootloader.py first')
+        if not build_bootloader.is_local():
+            if not os.environ.get('NX2A_PREBUILT_BOOTLOADER'):
+                sys.exit('PyInstaller has its prebuilt bootloader, which antivirus engines flag: run python packaging/build_bootloader.py first '
+                         '(needs the Microsoft C++ Build Tools), or set NX2A_PREBUILT_BOOTLOADER=1 to ship it anyway')
+            print('warning: shipping PyInstaller\'s prebuilt bootloader (NX2A_PREBUILT_BOOTLOADER=1): some antivirus engines flag this exe')
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--distpath', str(DIST), '--workpath', str(WORK), str(ROOT / 'packaging/nx2android.spec')], check=True)
     files = tracked('nxnative')   # the committed engine and profiles only: no local builds, keys or game files
     for f in files:
